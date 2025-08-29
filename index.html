@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facial Recognition with Masks and Body Points Overlay</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/vision_bundle.js" crossorigin="anonymous"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    #container { position: relative; display: inline-block; }
+    #video { width: 640px; height: 480px; }
+    #canvas { position: absolute; top: 0; left: 0; width: 640px; height: 480px; }
+    button { margin: 10px; padding: 10px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Real-time Facial and Body Landmark Detection</h1>
+  <p>This app uses MediaPipe to detect face, pose, and hand landmarks, with segmentation masks for the body. Points are plotted on the overlay.</p>
+  <div id="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
+  <br>
+  <button id="startBtn">Start Webcam</button>
+  <script>
+    const { HolisticLandmarker, FilesetResolver, DrawingUtils } = window;
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const drawingUtils = new DrawingUtils(ctx);
+
+    let holisticLandmarker;
+    let lastVideoTime = -1;
+    let segmentationMaskImage;
+
+    async function createHolisticLandmarker() {
+      const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/wasm');
+      holisticLandmarker = await HolisticLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task',
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+        numHands: 2,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputSegmentationMasks: true  // Enable masks for body segmentation
+      });
+    }
+
+    async function predictWebcam() {
+      if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        const results = await holisticLandmarker.detectForVideo(video, performance.now());
+
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw segmentation mask if available
+        if (results.segmentationMasks) {
+          if (!segmentationMaskImage) {
+            segmentationMaskImage = await createImageBitmap(results.segmentationMasks[0]);
+          }
+          ctx.globalAlpha = 0.5;  // Semi-transparent overlay
+          ctx.drawImage(segmentationMaskImage, 0, 0, canvas.width, canvas.height);
+          ctx.globalAlpha = 1.0;
+        }
+
+        // Draw face landmarks
+        if (results.faceLandmarks) {
+          for (const landmarks of results.faceLandmarks) {
+            drawingUtils.drawConnectors(landmarks, HolisticLandmarker.FACE_LANDMARKS_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+            drawingUtils.drawConnectors(landmarks, HolisticLandmarker.FACE_LANDMARKS_RIGHT_EYE, {color: '#FF3030'});
+            drawingUtils.drawConnectors(landmarks, HolisticLandmarker.FACE_LANDMARKS_LEFT_EYE, {color: '#30FF30'});
+          }
+        }
+
+        // Draw pose landmarks
+        if (results.poseLandmarks) {
+          for (const landmarks of results.poseLandmarks) {
+            drawingUtils.drawLandmarks(landmarks, {color: '#FFFFFF', lineWidth: 2});
+            drawingUtils.drawConnectors(landmarks, HolisticLandmarker.POSE_CONNECTIONS, {color: '#00FFFF', lineWidth: 4});
+          }
+        }
+
+        // Draw hand landmarks
+        if (results.leftHandLandmarks) {
+          drawingUtils.drawConnectors(results.leftHandLandmarks, HolisticLandmarker.HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+          drawingUtils.drawLandmarks(results.leftHandLandmarks, {color: '#00FF00', lineWidth: 2});
+        }
+        if (results.rightHandLandmarks) {
+          drawingUtils.drawConnectors(results.rightHandLandmarks, HolisticLandmarker.HAND_CONNECTIONS, {color: '#FF0000', lineWidth: 5});
+          drawingUtils.drawLandmarks(results.rightHandLandmarks, {color: '#FF0000', lineWidth: 2});
+        }
+
+        ctx.restore();
+      }
+      requestAnimationFrame(predictWebcam);
+    }
+
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      await navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+        video.play();
+      });
+      await createHolisticLandmarker();
+      video.addEventListener('loadeddata', predictWebcam);
+    });
+  </script>
+</body>
+</html>
